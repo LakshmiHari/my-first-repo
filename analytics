@@ -1,0 +1,22 @@
+import seaborn as sns
+import pandas as pd
+import matplotlib.pyplot as plt
+
+df = sns.load_dataset("titanic")
+df.to_csv("titanic.csv", index=False)
+
+print(df.info())
+print(df.describe())
+print(df.isnull().mean()*100)
+
+
+plt.hist(df["age"].dropna(), bins=20)
+plt.show()
+sns.boxplot(x=df["age"])
+plt.show()
+
+
+Q1, Q3 = df["fare"].quantile([0.25,0.75])
+IQR = Q3-Q1
+outliers = df[(df["fare"] < Q1-1.5*IQR) | (df["fare"] > Q3+1.5*IQR)]
+print("Fare outliers:", len(outliers))
