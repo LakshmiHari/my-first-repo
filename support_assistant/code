@@ -1,0 +1,73 @@
+
+from fastapi import FastAPI
+from pydantic import BaseModel
+import os
+from langgraph.graph import StateGraph
+from typing import TypedDict
+from sentence_transformers import SentenceTransformer
+import chromadb
+
+
+model = SentenceTransformer("all-MiniLM-L6-v2")
+chroma_client = chromadb.Client()
+collection = chroma_client.create_collection("zepto_policies")
+
+
+import glob
+docs = glob.glob("docs/*.txt")
+for i, path in enumerate(docs):
+    text = open(path).read()
+    emb = model.encode([text])
+    collection.add(documents=[text],embeddings=emb,ids=[f"doc_{i}"])
+
+
+class State(TypedDict):
+    query: str
+    intent: str
+    context: str
+    answer: str
+
+graph = StateGraph(State)
+
+def classify_intent(state: State) -> State:
+    q = state["query"].lower()
+    keywords = ["delivery","return","refund","membership","tracking","cancel","gift card","support hours"]
+    state["intent"] = "policy_question" if any(k in q for k in keywords) else "general_question"
+    return state
+
+def retrieve_context(state: State) -> State:
+    if state["intent"]=="policy_question":
+        results = collection.query(query_texts=[state["query"]],n_results=2)
+        state["context"] = " ".join(results["documents"][0])
+    else:
+        state["context"] = ""
+    return state
+
+def generate_answer(state: State) -> State:
+    if os.getenv("MOCK_LLM","1")=="1":
+        if state["context"]:
+            state["answer"] = f"Based on Zepto policy: {state['context']}"
+        else:
+            state["answer"] = "This is a general question; no policy context found."
+    else:
+    
+        state["answer"] = "LLM response here"
+    return state
+
+graph.add_node("classify", classify_intent)
+graph.add_node("retrieve", retrieve_context)
+graph.add_node("answer", generate_answer)
+graph.set_entry_point("classify")
+graph.add_edge("classify","retrieve")
+graph.add_edge("retrieve","answer")
+
+app = FastAPI()
+
+class Query(BaseModel):
+    query: str
+
+@app.post("/ask")
+def ask(q: Query):
+    state = {"query":q.query,"intent":"","context":"","answer":""}
+    result = graph.run(state)
+    return {"answer":result["answer"]}
